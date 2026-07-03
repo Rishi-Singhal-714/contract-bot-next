@@ -1,7 +1,7 @@
 {
   "crons": [
-    { "path": "/api/cron/expiry-scan", "schedule": "0 8 * * *" },
-    { "path": "/api/cron/poll-replies", "schedule": "*/5 * * * *" }
+    { "path": "/api/cron/expiry-scan", "schedule": "0 5 * * *" },
+    { "path": "/api/cron/poll-replies", "schedule": "*/4 * * * *" }
   ],
   "functions": {
     "app/api/cron/expiry-scan/route.ts": { "maxDuration": 300 },
