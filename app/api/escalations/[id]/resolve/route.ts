@@ -3,6 +3,7 @@ import * as db from '@/lib/db';
 import * as aiEngine from '@/lib/aiEngine';
 import { sendEmail } from '@/lib/emailClient';
 import { config } from '@/lib/config';
+import { withContractTag } from '@/lib/contractTag';
 
 export const maxDuration = 120;
 
@@ -22,12 +23,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         contract.client_name,
         contract.expiry_date
       );
-      await sendEmail(contract.client_email, 'Your contract has been renewed', confirmationBody);
+      await sendEmail(
+        contract.client_email,
+        withContractTag('Your contract has been renewed', contract.id),
+        confirmationBody
+      );
       await db.logMessage(
         contract.id,
         'outbound',
         config.emailAddress,
-        'Your contract has been renewed',
+        withContractTag('Your contract has been renewed', contract.id),
         confirmationBody
       );
       await db.updateContract(contract.id, { status: 'renewed' });

@@ -6,7 +6,8 @@ import { config } from './config';
 import * as db from './db';
 import * as aiEngine from './aiEngine';
 import { sendEmail } from './emailClient';
-import { fetchUnreadReplies } from './emailClient';
+import { fetchUnreadReplies, pollMailbox } from './emailClient';
+import type { ImapFlow } from 'imapflow';
 import { processIncomingReply } from './replyProcessor';
 import { downloadBuffer, buckets } from './storage';
 import { withContractTag } from './contractTag';
@@ -74,8 +75,8 @@ export async function runExpiryScan() {
   return { scanned: expiring.length };
 }
 
-export async function runReplyPoll() {
-  const replies = await fetchUnreadReplies();
+export async function runReplyPoll(client?: ImapFlow) {
+  const replies = client ? await pollMailbox(client) : await fetchUnreadReplies();
   console.log(`Found ${replies.length} new reply(ies)`);
   let ok = 0;
   let failed = 0;

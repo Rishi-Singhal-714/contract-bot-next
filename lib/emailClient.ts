@@ -55,12 +55,31 @@ export type FetchedReply = {
 };
 
 /**
- * Fetches new messages since the last recorded UID for the mailbox and
- * uploads any attachments to Supabase Storage. Does NOT rely on IMAP \Seen
- * flags (safer across retried/overlapping invocations) — instead advances a
- * persisted UID cursor once each message is fetched.
+ * Opens one IMAP connection. Callers are responsible for calling
+ * `.logout()` when done. Kept separate from `fetchUnreadReplies` so a caller
+ * that polls repeatedly (e.g. the poll-replies-loop route) can reuse a
+ * single connection instead of reconnecting every iteration — rapid
+ * reconnects are what trip most providers' "exceeded command or bandwidth
+ * limits" throttling.
  */
-export async function fetchUnreadReplies(): Promise<FetchedReply[]> {
+export function createImapClient(): ImapFlow {
+  return new ImapFlow({
+    host: config.imapHost,
+    port: config.imapPort,
+    secure: true,
+    auth: { user: config.emailAddress, pass: config.emailPassword },
+    logger: false,
+  });
+}
+
+/**
+ * Fetches new messages since the last recorded UID for the mailbox and
+ * uploads any attachments to Supabase Storage, using an already-connected
+ * IMAP client. Does NOT rely on IMAP \Seen flags (safer across
+ * retried/overlapping invocations) — instead advances a persisted UID
+ * cursor once each message is fetched.
+ */
+export async function pollMailbox(client: ImapFlow): Promise<FetchedReply[]> {
   const results: FetchedReply[] = [];
   const mailbox = 'INBOX';
 
@@ -72,18 +91,8 @@ export async function fetchUnreadReplies(): Promise<FetchedReply[]> {
     idsByEmail.get(key)!.add(id);
   }
 
-  const client = new ImapFlow({
-    host: config.imapHost,
-    port: config.imapPort,
-    secure: true,
-    auth: { user: config.emailAddress, pass: config.emailPassword },
-    logger: false,
-  });
-
-  await client.connect();
+  const lock = await client.getMailboxLock(mailbox);
   try {
-    const lock = await client.getMailboxLock(mailbox);
-    try {
       const lastUid = await getImapCursor(mailbox);
 
       // Search for UIDs greater than the last one we processed.
@@ -175,12 +184,24 @@ export async function fetchUnreadReplies(): Promise<FetchedReply[]> {
       if (matchedRemaining > 0) {
         console.log(`${matchedRemaining} more matched reply(ies) left for next run (per-run cap reached)`);
       }
-    } finally {
-      lock.release();
-    }
   } finally {
-    await client.logout();
+    lock.release();
   }
 
   return results;
+}
+
+/**
+ * Convenience wrapper for one-off callers (e.g. the plain /api/cron/poll-replies
+ * route) that don't need a connection kept open across multiple polls: opens
+ * a connection, polls once, and closes it.
+ */
+export async function fetchUnreadReplies(): Promise<FetchedReply[]> {
+  const client = createImapClient();
+  await client.connect();
+  try {
+    return await pollMailbox(client);
+  } finally {
+    await client.logout();
+  }
 }
