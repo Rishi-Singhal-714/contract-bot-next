@@ -53,16 +53,18 @@ async function chat(
   const client = getClient();
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const completion = await client.chat.completions.create({
+    const params: any = {
       model: config.aiModel,
       messages,
       temperature: jsonMode ? 0.3 : 0.7,
       top_p: 0.95,
       max_tokens: maxTokens,
-      // @ts-expect-error - provider-specific extra body, mirrors extra_body in Python SDK
       chat_template_kwargs: { thinking: false },
       stream: false,
-    });
+    };
+    const completion = await client.chat.completions.create(
+      params as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming
+    );
     const content = (completion.choices[0].message.content || '').trim();
 
     if (jsonMode || !looksDegenerate(content)) return content;
