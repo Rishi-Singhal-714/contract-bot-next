@@ -11,8 +11,9 @@ import nodemailer from 'nodemailer';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { config } from './config';
-import { getImapCursor, setImapCursor } from './db';
+import { getImapCursor, setImapCursor, listContractEmailIds } from './db';
 import { uploadBuffer, buckets } from './storage';
+import { extractContractIdFromSubject } from './contractTag';
 
 // Cap how many messages one cron invocation will process, so a mail backlog
 // can never blow through the 300s Vercel function timeout. Remaining
@@ -47,6 +48,8 @@ export type FetchedReply = {
   from: string;
   subject: string;
   body: string;
+  /** Contract this reply's [CB-<id>] tag was matched to. */
+  contractId: number;
   /** Storage paths (in the attachments bucket) of any saved attachments. */
   attachments: string[];
 };
@@ -60,6 +63,14 @@ export type FetchedReply = {
 export async function fetchUnreadReplies(): Promise<FetchedReply[]> {
   const results: FetchedReply[] = [];
   const mailbox = 'INBOX';
+
+  const contractPairs = await listContractEmailIds();
+  const idsByEmail = new Map<string, Set<number>>();
+  for (const { id, client_email } of contractPairs) {
+    const key = client_email.toLowerCase();
+    if (!idsByEmail.has(key)) idsByEmail.set(key, new Set());
+    idsByEmail.get(key)!.add(id);
+  }
 
   const client = new ImapFlow({
     host: config.imapHost,
@@ -77,45 +88,92 @@ export async function fetchUnreadReplies(): Promise<FetchedReply[]> {
 
       // Search for UIDs greater than the last one we processed.
       const searchRange = `${lastUid + 1}:*`;
-      let highestUidSeen = lastUid;
-      let processed = 0;
 
-      for await (const message of client.fetch(
-        { uid: searchRange },
-        { uid: true, envelope: true, source: true }
-      )) {
+      // Pass 1: envelope-only scan (cheap — no body/attachment download) to
+      // find which UIDs are from a known contract sender. Cursor is advanced
+      // through unrelated mail freely, but stops right before any matched
+      // reply beyond the per-run cap, so nothing real is ever skipped.
+      const scanned: { uid: number; matched: boolean }[] = [];
+      for await (const message of client.fetch({ uid: searchRange }, { uid: true, envelope: true })) {
         if (message.uid <= lastUid) continue; // guard against inclusive range edge case
-        if (processed >= MAX_MESSAGES_PER_RUN) break;
+        const fromAddr = (message.envelope?.from?.[0]?.address || '').toLowerCase();
+        const subject = message.envelope?.subject || '';
+        const contractIds = idsByEmail.get(fromAddr);
+        const taggedId = extractContractIdFromSubject(subject);
 
-        try {
-          const parsed = await simpleParser(message.source as Buffer);
-          const fromAddr = parsed.from?.value?.[0]?.address || '';
-          const subject = parsed.subject || '';
-          const body = (parsed.text || '').trim();
+        // Require BOTH: sender is a known contract email, AND the subject
+        // carries a [CB-<id>] tag that actually belongs to that sender's
+        // contract. This rejects unrelated mail from a known client address
+        // (e.g. a different, non-contract conversation) as well as mail
+        // from unknown senders.
+        const matched = !!contractIds && taggedId !== null && contractIds.has(taggedId);
+        scanned.push({ uid: message.uid, matched });
+      }
+      scanned.sort((a, b) => a.uid - b.uid);
 
-          const attachmentPaths: string[] = [];
-          for (const att of parsed.attachments || []) {
-            const path = `${Date.now()}-${att.filename || 'attachment.pdf'}`;
-            await uploadBuffer(buckets.attachments, path, att.content, att.contentType || 'application/octet-stream');
-            attachmentPaths.push(path);
+      let highestUidSeen = lastUid;
+      const matchedUids: number[] = [];
+      let matchedRemaining = 0;
+
+      for (const item of scanned) {
+        if (item.matched) {
+          if (matchedUids.length < MAX_MESSAGES_PER_RUN) {
+            matchedUids.push(item.uid);
+            highestUidSeen = item.uid;
+          } else {
+            matchedRemaining += 1; // left for next run; stop advancing past it
           }
-
-          results.push({ from: fromAddr, subject, body, attachments: attachmentPaths });
-        } catch (exc) {
-          // Don't let one bad message (e.g. a failed attachment upload) block
-          // the whole batch forever — log it, skip it, and keep the cursor
-          // moving so it's never retried on every subsequent poll.
-          console.error(`Failed to process message uid=${message.uid}, skipping:`, exc);
+        } else if (matchedRemaining === 0) {
+          // Only safe to skip past unrelated mail while we haven't yet hit a
+          // capped-out matched reply — otherwise we'd advance past it too.
+          highestUidSeen = item.uid;
         }
+      }
 
-        // Advance regardless of success/failure above, so a persistently
-        // failing message can't wedge the cursor and get refetched forever.
-        highestUidSeen = Math.max(highestUidSeen, message.uid);
-        processed += 1;
-
-        // Persist after each message rather than only at the end, so a crash
-        // partway through a batch doesn't lose progress on earlier messages.
+      if (highestUidSeen > lastUid) {
         await setImapCursor(mailbox, highestUidSeen);
+      }
+
+      // Pass 2: only now fetch full source (body + attachments) for the
+      // messages that actually matter.
+      if (matchedUids.length) {
+        for await (const message of client.fetch(
+          { uid: matchedUids.join(',') },
+          { uid: true, envelope: true, source: true }
+        )) {
+          const fromAddr = (message.envelope?.from?.[0]?.address || '').toLowerCase();
+          try {
+            const parsed = await simpleParser(message.source as Buffer);
+            const subject = parsed.subject || '';
+            const body = (parsed.text || '').trim();
+            const contractId = extractContractIdFromSubject(subject);
+
+            if (contractId === null) {
+              // Shouldn't happen (this UID was matched in pass 1), but guard
+              // against a malformed/edited subject just in case.
+              console.warn(`Message uid=${message.uid} lost its contract tag between passes, skipping`);
+              continue;
+            }
+
+            const attachmentPaths: string[] = [];
+            for (const att of parsed.attachments || []) {
+              const path = `${Date.now()}-${att.filename || 'attachment.pdf'}`;
+              await uploadBuffer(buckets.attachments, path, att.content, att.contentType || 'application/octet-stream');
+              attachmentPaths.push(path);
+            }
+
+            results.push({ from: fromAddr, subject, body, contractId, attachments: attachmentPaths });
+          } catch (exc) {
+            // Don't let one bad message (e.g. a failed attachment upload)
+            // block the rest — log it and move on. This UID is already past
+            // the cursor from pass 1, so it won't be retried on every poll.
+            console.error(`Failed to process message uid=${message.uid}, skipping:`, exc);
+          }
+        }
+      }
+
+      if (matchedRemaining > 0) {
+        console.log(`${matchedRemaining} more matched reply(ies) left for next run (per-run cap reached)`);
       }
     } finally {
       lock.release();

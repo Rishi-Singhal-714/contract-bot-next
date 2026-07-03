@@ -43,10 +43,12 @@ async function escalate(contract: Contract, reason: string, messages: Conversati
 
 export async function processIncomingReply(rawReply: FetchedReply) {
   const senderEmail = rawReply.from;
-  const contract = await db.getContractByEmail(senderEmail);
+  const contract = await db.getContract(rawReply.contractId);
 
-  if (!contract) {
-    console.warn(`No matching contract for sender ${senderEmail} — skipping`);
+  if (!contract || contract.client_email.toLowerCase() !== senderEmail.toLowerCase()) {
+    console.warn(
+      `Reply tagged for contract ${rawReply.contractId} but sender ${senderEmail} doesn't match — skipping`
+    );
     return;
   }
 

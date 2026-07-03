@@ -99,6 +99,33 @@ export async function listContracts(status?: string): Promise<Contract[]> {
   return rows as Contract[];
 }
 
+/**
+ * All distinct client emails we have a contract for. Used to filter the
+ * inbox at the IMAP level so unrelated mail (newsletters, other services,
+ * etc.) is never even fetched/parsed — instead of downloading everything
+ * and discarding it after the fact.
+ */
+export async function listClientEmails(): Promise<string[]> {
+  const pool = getPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    'SELECT DISTINCT client_email FROM contracts WHERE client_email IS NOT NULL'
+  );
+  return (rows as { client_email: string }[]).map((r) => r.client_email).filter(Boolean);
+}
+
+/**
+ * (id, client_email) pairs for every contract. Used to cross-check that an
+ * inbound reply's `[CB-<id>]` subject tag actually belongs to the contract
+ * for that sender address — not just any known client email.
+ */
+export async function listContractEmailIds(): Promise<{ id: number; client_email: string }[]> {
+  const pool = getPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    'SELECT id, client_email FROM contracts WHERE client_email IS NOT NULL'
+  );
+  return rows as { id: number; client_email: string }[];
+}
+
 export async function listExpiringContracts(withinDays: number): Promise<Contract[]> {
   const today = new Date();
   const cutoff = new Date(today);

@@ -9,6 +9,7 @@ import { sendEmail } from './emailClient';
 import { fetchUnreadReplies } from './emailClient';
 import { processIncomingReply } from './replyProcessor';
 import { downloadBuffer, buckets } from './storage';
+import { withContractTag } from './contractTag';
 
 export async function runExpiryScan() {
   const expiring = await db.listExpiringContracts(config.expiryWarningDays);
@@ -34,12 +35,17 @@ export async function runExpiryScan() {
         }
       }
 
-      await sendEmail(contract.client_email, 'Your contract renewal is coming up', body, attachment);
+      await sendEmail(
+        contract.client_email,
+        withContractTag('Your contract renewal is coming up', contract.id),
+        body,
+        attachment
+      );
       await db.logMessage(
         contract.id,
         'outbound',
         config.emailAddress,
-        'Your contract renewal is coming up',
+        withContractTag('Your contract renewal is coming up', contract.id),
         body
       );
       await db.updateContract(contract.id, { status: 'renewal_sent' });
