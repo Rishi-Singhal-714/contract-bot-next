@@ -41,5 +41,4 @@ export const config = {
   contractMatchThreshold: parseFloat(process.env.CONTRACT_MATCH_THRESHOLD || '0.90'),
 
   // --- Cron auth ---
-  cronSecret: process.env.CRON_SECRET || '',
 };

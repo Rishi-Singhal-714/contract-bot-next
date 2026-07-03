@@ -90,8 +90,7 @@ cp .env.example .env.local
 
 Fill in: MySQL host/user/password/database, Supabase URL/key,
 `NVIDIA_API_KEY`, `EMAIL_ADDRESS` / `EMAIL_PASSWORD` (Gmail app password,
-same as before), `EMPLOYEE_EMAILS`, and a random `CRON_SECRET` (lets you
-trigger the cron routes by hand for testing).
+same as before), and `EMPLOYEE_EMAILS`.
 
 ### 4. Install & run locally
 
@@ -105,8 +104,9 @@ Trigger a scan/poll cycle manually while developing (mirrors `python
 scheduler.py --once`):
 
 ```bash
-curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/expiry-scan
-curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/poll-replies
+curl http://localhost:3000/api/cron/expiry-scan
+curl http://localhost:3000/api/cron/poll-replies
+curl http://localhost:3000/api/cron/poll-replies-loop
 ```
 
 ### 5. Deploy to Vercel

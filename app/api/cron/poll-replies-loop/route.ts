@@ -1,26 +1,28 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { config } from '@/lib/config';
+import { NextResponse } from 'next/server';
 import { runReplyPoll } from '@/lib/scheduler';
 
+// Hobby plans can't schedule a Vercel Cron more often than once/day, so this
+// route is meant to be hit by an EXTERNAL scheduler (cron-job.org, GitHub
+// Actions, UptimeRobot, EasyCron, etc.) instead of vercel.json's `crons`.
+// Each hit keeps polling in a loop for ~4.5 minutes before returning, so a
+// trigger every 5 minutes gives near-continuous coverage without ever
+// exceeding one invocation per call.
+//
+// NOTE: maxDuration of 300s requires either a Pro plan, or a Hobby project
+// with Fluid Compute enabled. If your account caps functions at 60s, lower
+// RUN_BUDGET_MS below (e.g. to 50_000) so the function returns before Vercel
+// kills it.
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
-const RUN_BUDGET_MS = 4.5 * 60 * 1000;
-const POLL_INTERVAL_MS = 20 * 1000;
+const RUN_BUDGET_MS = 4.5 * 60 * 1000; // leave headroom under the 300s hard limit
+const POLL_INTERVAL_MS = 20 * 1000; // gap between polls inside one invocation
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization');
-  const isVercelCron = req.headers.get('x-vercel-cron') === '1';
-  const hasSecret = config.cronSecret && authHeader === `Bearer ${config.cronSecret}`;
-
-  if (!isVercelCron && !hasSecret) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+export async function GET() {
   const startedAt = Date.now();
   let iterations = 0;
   let totalFound = 0;
