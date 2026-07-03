@@ -1,13 +1,13 @@
 {
-  "crons": [
-    { "path": "/api/cron/expiry-scan", "schedule": "0 5 * * *" },
-    { "path": "/api/cron/poll-replies", "schedule": "*/4 * * * *" }
-  ],
-  "functions": {
-    "app/api/cron/expiry-scan/route.ts": { "maxDuration": 300 },
-    "app/api/cron/poll-replies/route.ts": { "maxDuration": 300 },
-    "app/api/escalations/[id]/resolve/route.ts": { "maxDuration": 120 },
-    "app/api/contracts/route.ts": { "maxDuration": 60 },
-    "app/api/contracts/[id]/route.ts": { "maxDuration": 60 }
-  }
-}
+   "crons": [
+     { "path": "/api/cron/expiry-scan", "schedule": "0 8 * * *" }
+   ],
+   "functions": {
+     "app/api/cron/expiry-scan/route.ts": { "maxDuration": 300 },
+     "app/api/cron/poll-replies/route.ts": { "maxDuration": 300 },
+    "app/api/cron/poll-replies-loop/route.ts": { "maxDuration": 300 },
+     "app/api/escalations/[id]/resolve/route.ts": { "maxDuration": 120 },
+     "app/api/contracts/route.ts": { "maxDuration": 60 },
+     "app/api/contracts/[id]/route.ts": { "maxDuration": 60 }
+   }
+ }
