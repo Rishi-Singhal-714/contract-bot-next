@@ -5,6 +5,14 @@ import { config } from './config';
 // imported from client components — only from API routes / server actions.
 let _client: ReturnType<typeof createClient> | null = null;
 
+// Next.js's App Router patches global fetch to build a Data Cache key for
+// every call. It can't hash a raw Buffer/binary body (used by Storage
+// uploads), which throws "Failed to generate cache key for ..." and aborts
+// the request. Passing cache: 'no-store' explicitly skips that hashing path.
+function noStoreFetch(input: RequestInfo | URL, init?: RequestInit) {
+  return fetch(input, { ...init, cache: 'no-store' });
+}
+
 export function getSupabase() {
   if (!_client) {
     if (!config.supabaseUrl || !config.supabaseServiceRoleKey) {
@@ -12,6 +20,7 @@ export function getSupabase() {
     }
     _client = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
       auth: { persistSession: false },
+      global: { fetch: noStoreFetch as typeof fetch },
     });
   }
   return _client;

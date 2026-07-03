@@ -87,25 +87,34 @@ export async function fetchUnreadReplies(): Promise<FetchedReply[]> {
         if (message.uid <= lastUid) continue; // guard against inclusive range edge case
         if (processed >= MAX_MESSAGES_PER_RUN) break;
 
-        const parsed = await simpleParser(message.source as Buffer);
-        const fromAddr = parsed.from?.value?.[0]?.address || '';
-        const subject = parsed.subject || '';
-        const body = (parsed.text || '').trim();
+        try {
+          const parsed = await simpleParser(message.source as Buffer);
+          const fromAddr = parsed.from?.value?.[0]?.address || '';
+          const subject = parsed.subject || '';
+          const body = (parsed.text || '').trim();
 
-        const attachmentPaths: string[] = [];
-        for (const att of parsed.attachments || []) {
-          const path = `${Date.now()}-${att.filename || 'attachment.pdf'}`;
-          await uploadBuffer(buckets.attachments, path, att.content, att.contentType || 'application/octet-stream');
-          attachmentPaths.push(path);
+          const attachmentPaths: string[] = [];
+          for (const att of parsed.attachments || []) {
+            const path = `${Date.now()}-${att.filename || 'attachment.pdf'}`;
+            await uploadBuffer(buckets.attachments, path, att.content, att.contentType || 'application/octet-stream');
+            attachmentPaths.push(path);
+          }
+
+          results.push({ from: fromAddr, subject, body, attachments: attachmentPaths });
+        } catch (exc) {
+          // Don't let one bad message (e.g. a failed attachment upload) block
+          // the whole batch forever — log it, skip it, and keep the cursor
+          // moving so it's never retried on every subsequent poll.
+          console.error(`Failed to process message uid=${message.uid}, skipping:`, exc);
         }
 
-        results.push({ from: fromAddr, subject, body, attachments: attachmentPaths });
-
+        // Advance regardless of success/failure above, so a persistently
+        // failing message can't wedge the cursor and get refetched forever.
         highestUidSeen = Math.max(highestUidSeen, message.uid);
         processed += 1;
-      }
 
-      if (highestUidSeen > lastUid) {
+        // Persist after each message rather than only at the end, so a crash
+        // partway through a batch doesn't lose progress on earlier messages.
         await setImapCursor(mailbox, highestUidSeen);
       }
     } finally {

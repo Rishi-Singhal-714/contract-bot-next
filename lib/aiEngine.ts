@@ -53,6 +53,9 @@ async function chat(
   const client = getClient();
 
   for (let attempt = 0; attempt < 2; attempt++) {
+    // provider-specific extra body (mirrors extra_body in the Python SDK) —
+    // chat_template_kwargs isn't part of the OpenAI SDK's typed params, so
+    // this is built as `any` to avoid tripping TS's excess-property check.
     const params: any = {
       model: config.aiModel,
       messages,
@@ -62,6 +65,7 @@ async function chat(
       chat_template_kwargs: { thinking: false },
       stream: false,
     };
+
     const completion = await client.chat.completions.create(
       params as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming
     );
